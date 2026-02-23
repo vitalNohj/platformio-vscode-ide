@@ -220,7 +220,7 @@ The core of the clangd integration. Contains all backend-aware logic:
 | `fixupCompileCommands(projectDir)`  | **Post-processes `compile_commands.json`** — see below                                                             |
 | `ensureClangdArgs(projectDir)`      | Writes `--compile-commands-dir` and `--query-driver` to `clangd.arguments` workspace setting                       |
 | `notifyRescanBackend()`             | Executes the active backend's rescan command (e.g., `clangd.restart`)                                              |
-| `warnIfBackendMissing()`            | Shows a warning if the backend extension isn't installed, with an install button                                   |
+| `warnIfBackendMissing()`            | Shows a missing-backend warning; if `cpptools` is selected but missing, VS Code prompts to install `ms-vscode.cpptools`, while non-VS Code hosts offer a guided clangd fallback (switch directly if installed, or search for clangd/Anysphere C++) plus an install-cpptools option |
 
 #### `fixupCompileCommands` — the key function
 

@@ -309,12 +309,15 @@ export function warnIfBackendMissing() {
     return;
   }
   const backend = getActiveBackend();
+  const appName = (vscode.env.appName || '').toLowerCase();
+  const isVSCodeHost = appName.includes('visual studio code') || appName === 'code';
   const clangdInstalled = !!vscode.extensions.getExtension(
     INTELLISENSE_BACKENDS.clangd.extensionId,
   );
 
-  // Friendly fallback path: if cpptools is missing, help users switch to clangd.
-  if (backend.id === 'cpptools') {
+  // Friendly fallback path for non-VS Code hosts: if cpptools is missing,
+  // help users switch to clangd or discover alternative C++ extensions.
+  if (backend.id === 'cpptools' && !isVSCodeHost) {
     const switchTitle = clangdInstalled
       ? 'Switch to clangd'
       : 'Find clangd / Anysphere C++';
