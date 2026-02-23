@@ -6,11 +6,22 @@
  * the root directory of this source tree.
  */
 
-import { INTELLISENSE_BACKENDS, getConflictedExtensionIds } from './constants';
+import {
+  INTELLISENSE_BACKENDS,
+  IS_WINDOWS,
+  getConflictedExtensionIds,
+} from './constants';
 import { extension } from './main';
 import vscode from 'vscode';
 import { promises as fs } from 'fs';
 import path from 'path';
+
+function getPlatformIOCoreDir() {
+  return (
+    process.env.PLATFORMIO_CORE_DIR ||
+    path.join(process.env.HOME || process.env.USERPROFILE || '~', '.platformio')
+  );
+}
 
 export function getActiveBackendId() {
   return extension.getConfiguration('intelliSenseEngine') || 'cpptools';
@@ -89,8 +100,7 @@ export async function fixupCompileCommands(projectDir) {
   }
 
   const resolveCache = new Map();
-  const homedir = process.env.HOME || process.env.USERPROFILE || '~';
-  const packagesDir = path.join(homedir, '.platformio', 'packages');
+  const packagesDir = path.join(getPlatformIOCoreDir(), 'packages');
 
   async function resolveCompiler(bare) {
     if (resolveCache.has(bare)) {
@@ -144,7 +154,7 @@ export async function fixupCompileCommands(projectDir) {
 
     // 2. Convert relative -I paths to absolute
     for (let i = 1; i < parts.length; i++) {
-      if (parts[i].startsWith('-I') && !parts[i].startsWith('-I/')) {
+      if (parts[i].startsWith('-I') && !path.isAbsolute(parts[i].slice(2))) {
         parts[i] = `-I${path.join(dir, parts[i].slice(2))}`;
       }
     }
@@ -158,13 +168,15 @@ export async function fixupCompileCommands(projectDir) {
   //    have no .cpp entry nearby get no flags and lose all IntelliSense.
   //    We find a representative project entry and clone its flags for every
   //    missing file.
+  const pioBuildDir = `${path.sep}.pio${path.sep}`;
+  const pioCoreDir = `${path.sep}.platformio${path.sep}`;
   const projectSrcEntries = entries.filter(
     (e) =>
       e.file &&
       e.command &&
       e.file.startsWith(projectDir) &&
-      !e.file.includes('/.pio/') &&
-      !e.file.includes('/.platformio/'),
+      !e.file.includes(pioBuildDir) &&
+      !e.file.includes(pioCoreDir),
   );
 
   // Pick the entry with the richest include set (most -I flags) as template
@@ -182,6 +194,14 @@ export async function fixupCompileCommands(projectDir) {
     const templateCmd = templateEntry.command.replace(/\s-o\s+\S+/, ' -o /dev/null');
     const templateDir = templateEntry.directory;
 
+    const SKIP_DIRS = new Set([
+      'node_modules',
+      '.pio',
+      '.git',
+      'build',
+      '__pycache__',
+    ]);
+
     async function walkDir(dir) {
       const result = [];
       let dirents;
@@ -193,7 +213,7 @@ export async function fixupCompileCommands(projectDir) {
       for (const d of dirents) {
         const full = path.join(dir, d.name);
         if (d.isDirectory()) {
-          if (d.name.startsWith('.') || d.name === 'node_modules') {
+          if (d.name.startsWith('.') || SKIP_DIRS.has(d.name)) {
             continue;
           }
           result.push(...(await walkDir(full)));
@@ -208,9 +228,6 @@ export async function fixupCompileCommands(projectDir) {
     const syntheticEntries = [];
 
     for (const file of allProjectFiles) {
-      if (file.includes('/.pio/') || file.includes('/node_modules/')) {
-        continue;
-      }
       if (existingFiles.has(file)) {
         continue;
       }
@@ -245,8 +262,13 @@ export async function ensureClangdArgs(projectDir) {
   // --query-driver: let clangd query PlatformIO cross-compilers for built-in
   // include paths (C++ stdlib, GCC internals, sysroot). Without this, clangd
   // can't resolve system headers for embedded targets like xtensa, arm, riscv.
-  const homedir = process.env.HOME || process.env.USERPROFILE || '~';
-  const queryDriverGlob = `${homedir}/.platformio/packages/toolchain-*/bin/*,${homedir}/.platformio/packages/tool-*/bin/*`;
+  const pioDir = getPlatformIOCoreDir();
+  const sep = IS_WINDOWS ? '\\' : '/';
+  const glob = IS_WINDOWS ? '*\\*' : '*/bin/*';
+  const queryDriverGlob = [
+    `${pioDir}${sep}packages${sep}toolchain-${glob}`,
+    `${pioDir}${sep}packages${sep}tool-${glob}`,
+  ].join(',');
   const queryDriverFlag = `--query-driver=${queryDriverGlob}`;
   changed = upsertArg(newArgs, '--query-driver=', queryDriverFlag) || changed;
 

@@ -1,52 +1,217 @@
-# PlatformIO IDE for VSCode
+# Clangd IntelliSense Backend for PlatformIO VS Code IDE
 
-[PlatformIO](https://platformio.org): Your Gateway to Embedded Software Development Excellence.
+## Overview
 
-Unlock the true potential of embedded software development with PlatformIO’s collaborative ecosystem, embracing declarative principles, test-driven methodologies, and modern toolchains for unrivaled success.
+This fork adds **clangd** as an alternative IntelliSense backend alongside the existing Microsoft C/C++ (`cpptools`) engine. Users can switch between backends via a single setting. When clangd is selected, the extension automatically generates `compile_commands.json`, post-processes it for clangd compatibility, and configures the clangd language server with the correct arguments for cross-compilation toolchains.
 
-* Open source, maximum permissive Apache 2.0 license
-* Cross-platform IDE and Unified Debugger
-* Static Code Analyzer and Remote Unit Testing
-* Multi-platform and Multi-architecture Build System
-* Firmware File Explorer and Memory Inspection.
+**Upstream:** [platformio/platformio-vscode-ide](https://github.com/platformio/platformio-vscode-ide) (tag `v3.3.4`)
+**Fork:** [vitalNohj/platformio-vscode-ide](https://github.com/vitalNohj/platformio-vscode-ide)
 
-**Platforms**: Atmel AVR, Atmel SAM, Espressif 32, Espressif 8266, Freescale Kinetis, Infineon XMC, Intel ARC32, Intel MCS-51 (8051), Kendryte K210, Lattice iCE40, Maxim 32, Microchip PIC32, Nordic nRF51, Nordic nRF52, NXP LPC, RISC-V, Silicon Labs EFM32, ST STM32, ST STM8, Teensy, TI MSP430, TI Tiva, WIZNet W7500
+---
 
-**Frameworks**: Arduino, CMSIS, ESP-IDF, ESP8266 RTOS SDK, Freedom E SDK, Kendryte Standalone SDK, Kendryte FreeRTOS SDK, libOpenCM3, mbed, PULP OS, SPL, STM32Cube, WiringPi, Zephyr RTOS
+## Why
 
-## Features
+The upstream extension is tightly coupled to Microsoft's C/C++ extension (`ms-vscode.cpptools`). It hard-requires it as an `extensionDependency` and generates `c_cpp_properties.json` exclusively. Clangd is a faster, more accurate language server for many embedded projects, but using it with PlatformIO required extensive manual setup:
 
-* Cross-platform code builder without external dependencies to a system software:
-    - 1000+ embedded boards
-    - 40+ development platforms
-    - 20+ frameworks
-* [Debugging](http://docs.platformio.org/page/plus/debugging.html)
-* [Unit Testing](http://docs.platformio.org/page/plus/unit-testing.html)
-* [Static Code Analysis](http://docs.platformio.org/page/plus/pio-check.html)
-* [Remote Development](http://docs.platformio.org/page/plus/pio-remote.html)
-* C/C++ Intelligent Code Completion
-* C/C++ Smart Code Linter for rapid professional development
-* Library Manager for the thousands of popular libraries
-* Multi-projects workflow with multiple panes
-* Themes support with dark and light colors
-* Serial Port Monitor
-* Built-in Terminal with [PlatformIO Core](http://docs.platformio.org/page/core.html) tool (``pio``, ``platformio``)
+- Generating `compile_commands.json` manually via `pio run -t compiledb`
+- Fixing bare compiler names that clangd's `--query-driver` can't match
+- Fixing relative include paths that clangd can't resolve
+- Adding `--query-driver` globs so clangd queries cross-compilers for system headers
+- Creating synthetic compilation database entries for header files in directories that clangd's proximity heuristic can't reach
+- Disabling `cpptools` IntelliSense to avoid conflicts
 
-## How it works
+This fork automates all of that.
 
-**!!! PLEASE READ "QUICK START" AND "USER GUIDE" BEFORE !!!**
+---
 
-* [Installation](http://docs.platformio.org/page/ide/vscode.html)
-* [Quick Start](http://docs.platformio.org/page/ide/vscode.html#quick-start)
-* [User Guide](http://docs.platformio.org/page/ide/vscode.html#user-guide)
+## New Setting
 
-Please follow to the official documentation [PlatformIO IDE for VSCode](http://docs.platformio.org/page/ide/vscode.html).
+```
+platformio-ide.intelliSenseEngine: "cpptools" | "clangd"
+```
 
-[![PlatformIO IDE for VSCode](https://docs.platformio.org/en/latest/_images/platformio-ide-vscode.png)](http://docs.platformio.org/page/ide/vscode.html)
+- **`cpptools`** (default) — behaves identically to upstream. Runs `pio project init --ide vscode`, generates `c_cpp_properties.json`.
+- **`clangd`** — runs `pio run --target compiledb`, generates `compile_commands.json`, post-processes it, and configures `clangd.arguments`.
 
-## License
+Change this in **Settings > PlatformIO IDE > IntelliSense Engine**. Requires a window reload.
 
-Copyright (C) 2017-present PlatformIO <contact@platformio.org>
+---
 
-The PlatformIO IDE for VSCode is licensed under the permissive Apache 2.0 license,
-so you can use it in both commercial and personal projects with confidence.
+## Changed Files (vs upstream `v3.3.4`)
+
+### `src/constants.js`
+
+**What changed:** Replaced the hardcoded `CONFLICTED_EXTENSION_IDS` array with a structured `INTELLISENSE_BACKENDS` registry and a dynamic `getConflictedExtensionIds()` function.
+
+**Why:** The upstream treated `vscode-clangd` as always-conflicted. We need it to be a first-class backend. The registry stores each backend's metadata (extension ID, rescan command, config defaults, PIO CLI args) in one place so the rest of the code is data-driven.
+
+**Key details:**
+- `cpptools` backend sets `C_Cpp.intelliSenseEngine: "default"` and `C_Cpp.debugShortcut: false`
+- `clangd` backend sets `C_Cpp.intelliSenseEngine: "disabled"` and `clangd.detectExtensionConflicts: false`
+- `getConflictedExtensionIds()` dynamically marks all non-active backend extensions as conflicted
+- Each backend defines `rebuildArgs(env)` returning the PIO CLI arguments for index generation
+
+### `src/main.js`
+
+**What changed:** Added calls to `applyBackendConfigDefaults()` and `warnIfBackendMissing()` during extension activation.
+
+**Why:** On startup, the extension needs to apply the active backend's config defaults (e.g., disable cpptools IntelliSense when clangd is active) and warn if the required backend extension isn't installed.
+
+### `src/misc.js`
+
+**What changed:** `warnAboutConflictedExtensions()` now calls `getActiveConflictedExtensionIds()` from `intellisense.js` instead of importing the removed `CONFLICTED_EXTENSION_IDS` constant.
+
+**Why:** The conflicted extension list is now dynamic — it depends on which backend is active.
+
+### `src/project/manager.js`
+
+**What changed:**
+- Passes `getActiveBackend()` as `intelliSenseBackend` to `ProjectPool`
+- Adds `onDidRebuildIndex` callback that runs `fixupCompileCommands()`, `ensureClangdArgs()`, and `notifyRescanBackend()` after every index rebuild
+- Calls `ensureClangdArgs()` on project switch
+
+**Why:** The index rebuild pipeline needs to know which backend to use for CLI args, and clangd needs post-processing of `compile_commands.json` and workspace settings configuration after every rebuild.
+
+### `package.json`
+
+**What changed:**
+- Added `platformio-ide.intelliSenseEngine` setting with `cpptools`/`clangd` enum
+- Emptied `extensionDependencies` (was `["ms-vscode.cpptools"]`)
+- Emptied `configurationDefaults` (was `{ "C_Cpp.debugShortcut": false }` — now managed dynamically)
+- Added `patch-package` to `devDependencies`
+- Added npm scripts: `prepare-helpers`, `create-helper-patch`, `postinstall`
+
+**Why:**
+- `extensionDependencies` forced cpptools installation — incompatible with clangd-only users
+- Config defaults are now applied at runtime based on the active backend
+- `patch-package` workflow applies `platformio-node-helpers` changes to `node_modules`
+
+### `.vscodeignore`
+
+**What changed:** Added `platformio-node-helpers/**`, `patches/**`, `.cursor/**`.
+
+**Why:** Exclude development-only files from the VSIX package to keep it small.
+
+### `.gitignore`
+
+**What changed:** Added `.DS_Store`.
+
+**Why:** macOS housekeeping.
+
+---
+
+## New Files
+
+### `src/intellisense.js`
+
+The core of the clangd integration. Contains all backend-aware logic:
+
+| Function | Purpose |
+|---|---|
+| `getPlatformIOCoreDir()` | Resolves PlatformIO home dir via `PLATFORMIO_CORE_DIR` env var or `~/.platformio` |
+| `getActiveBackendId()` | Reads the `intelliSenseEngine` setting, defaults to `cpptools` |
+| `getActiveBackend()` | Returns the full backend descriptor from the registry |
+| `getActiveConflictedExtensionIds()` | Returns extension IDs that conflict with the active backend |
+| `isBackendExtensionInstalled()` | Checks if the active backend's VS Code extension is installed |
+| `applyBackendConfigDefaults()` | Applies config defaults for the active backend; intelligently undoes settings set by the previously-active backend |
+| `fixupCompileCommands(projectDir)` | **Post-processes `compile_commands.json`** — see below |
+| `ensureClangdArgs(projectDir)` | Writes `--compile-commands-dir` and `--query-driver` to `clangd.arguments` workspace setting |
+| `notifyRescanBackend()` | Executes the active backend's rescan command (e.g., `clangd.restart`) |
+| `warnIfBackendMissing()` | Shows a warning if the backend extension isn't installed, with an install button |
+
+#### `fixupCompileCommands` — the key function
+
+PlatformIO's `pio run -t compiledb` produces a `compile_commands.json` that doesn't work with clangd out of the box. This function fixes three problems:
+
+1. **Bare compiler names** — PIO writes `xtensa-esp32-elf-g++` instead of the full path. Clangd's `--query-driver` glob can't match bare names, so it never queries the cross-compiler for built-in system headers. The function searches `~/.platformio/packages/toolchain-*/bin/` and `tool-*/bin/` to resolve each bare name to its absolute path.
+
+2. **Relative include paths** — PIO writes `-I.pio/libdeps/...` instead of absolute paths. While clangd should resolve these against the `"directory"` field, in practice this is unreliable. The function converts all relative `-I` paths to absolute.
+
+3. **Missing header entries** — Clangd uses directory proximity to match header files to compilation database entries. If a header lives in a different directory tree than any `.cpp` file (e.g., `usermods/foo.h` included from `wled00/main.cpp`), clangd can't find matching flags and loses all IntelliSense for that header. The function walks the project directory, finds all `.h/.hpp/.c/.cpp/.cc/.cxx/.ino` files that aren't already in the database, and adds synthetic entries using the richest compile command as a template.
+
+#### Platform-agnostic design
+
+- Uses `PLATFORMIO_CORE_DIR` env var with `~/.platformio` fallback
+- Uses `path.isAbsolute()` and `path.sep` instead of hardcoded `/`
+- Builds `--query-driver` globs with correct OS path separators
+- Skips `.pio`, `.git`, `node_modules`, `build`, `__pycache__` during directory walks
+- No assumptions about toolchain names, board architectures, or project structure
+
+### `patches/platformio-node-helpers+11.3.0.patch`
+
+A `patch-package` patch applied to `node_modules/platformio-node-helpers` on `npm install`. Contains the changes to the `platformio-node-helpers` npm package described below.
+
+### `platformio-node-helpers/platformio-node-helpers/` (git submodule)
+
+A submodule pointing to a fork of [platformio-node-helpers](https://github.com/platformio/platformio-node-helpers). Contains modified source files that are built and patched into `node_modules`. Three files are changed:
+
+#### `src/project/indexer.js`
+
+- Uses `this.options.intelliSenseBackend.rebuildArgs()` to determine CLI arguments instead of always running `pio project init --ide vscode`. For clangd, this runs `pio run --target compiledb`.
+- Awaits `this.options.api.onDidRebuildIndex(projectDir)` after successful index generation so the extension can post-process `compile_commands.json`.
+
+#### `src/project/tasks.js`
+
+- `ProjectTasks` constructor accepts `intelliSenseBackend` parameter.
+- `fetchEnvTasks()` uses `backend.rebuildArgs(env)` to build the correct "Rebuild IntelliSense Index" task command.
+
+#### `src/project/observer.js`
+
+- Passes `this.options.intelliSenseBackend` through to `ProjectTasks`.
+
+### `TESTING.md`
+
+Instructions for building the extension, applying helper patches, packaging as VSIX, and testing locally.
+
+---
+
+## How the Clangd Pipeline Works
+
+```
+User selects "clangd" in settings → Window reload
+                    ↓
+Extension activates → applyBackendConfigDefaults()
+  - Sets C_Cpp.intelliSenseEngine = "disabled"
+  - Sets clangd.detectExtensionConflicts = false
+                    ↓
+"Rebuild IntelliSense Index" triggered
+                    ↓
+indexer.js runs: pio run --target compiledb --environment <env>
+  → Produces compile_commands.json
+                    ↓
+onDidRebuildIndex callback fires:
+  1. fixupCompileCommands(projectDir)
+     - Resolves bare compiler names to absolute paths
+     - Converts relative -I paths to absolute
+     - Adds synthetic entries for uncovered headers
+  2. ensureClangdArgs(projectDir)
+     - Sets --compile-commands-dir in clangd.arguments
+     - Sets --query-driver glob in clangd.arguments
+  3. notifyRescanBackend()
+     - Executes clangd.restart
+                    ↓
+Clangd reads compile_commands.json with:
+  - Absolute compiler paths matching --query-driver
+  - Absolute include paths for all libraries
+  - Entries for every project header file
+  → Full IntelliSense for all project files
+```
+
+---
+
+## Development Workflow
+
+```bash
+# Install dependencies (patch-package runs automatically via postinstall)
+npm install
+
+# After modifying platformio-node-helpers source:
+npm run prepare-helpers    # Build helpers and copy to node_modules
+npm run create-helper-patch # Generate/update the .patch file
+
+# Build extension
+npm run build
+
+# Package VSIX
+npx vsce package --no-yarn
+```
