@@ -43,6 +43,9 @@ _Excludes local/dev artifacts (for example `.cursor/**` plans and packaged `.vsi
 > npm run create-helper-patch
 > npm run vscode:package
 > ```
+>
+> command palette: `>Extensions: Install from VSIX...`
+> find and install the .vsix
 
 ---
 
@@ -209,17 +212,17 @@ platformio-vscode-ide/
 
 The core of the clangd integration. Contains all backend-aware logic:
 
-| Function                            | Purpose                                                                                                            |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `getPlatformIOCoreDir()`            | Resolves PlatformIO home dir via `PLATFORMIO_CORE_DIR` env var or `~/.platformio`                                  |
-| `getActiveBackendId()`              | Reads the `intelliSenseEngine` setting, defaults to `cpptools`                                                     |
-| `getActiveBackend()`                | Returns the full backend descriptor from the registry                                                              |
-| `getActiveConflictedExtensionIds()` | Returns extension IDs that conflict with the active backend                                                        |
-| `isBackendExtensionInstalled()`     | Checks if the active backend's VS Code extension is installed                                                      |
-| `applyBackendConfigDefaults()`      | Applies config defaults for the active backend; intelligently undoes settings set by the previously-active backend |
-| `fixupCompileCommands(projectDir)`  | **Post-processes `compile_commands.json`** — see below                                                             |
-| `ensureClangdArgs(projectDir)`      | Writes `--compile-commands-dir` and `--query-driver` to `clangd.arguments` workspace setting                       |
-| `notifyRescanBackend()`             | Executes the active backend's rescan command (e.g., `clangd.restart`)                                              |
+| Function                            | Purpose                                                                                                                                                                                                                                                                            |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `getPlatformIOCoreDir()`            | Resolves PlatformIO home dir via `PLATFORMIO_CORE_DIR` env var or `~/.platformio`                                                                                                                                                                                                  |
+| `getActiveBackendId()`              | Reads the `intelliSenseEngine` setting, defaults to `cpptools`                                                                                                                                                                                                                     |
+| `getActiveBackend()`                | Returns the full backend descriptor from the registry                                                                                                                                                                                                                              |
+| `getActiveConflictedExtensionIds()` | Returns extension IDs that conflict with the active backend                                                                                                                                                                                                                        |
+| `isBackendExtensionInstalled()`     | Checks if the active backend's VS Code extension is installed                                                                                                                                                                                                                      |
+| `applyBackendConfigDefaults()`      | Applies config defaults for the active backend; intelligently undoes settings set by the previously-active backend                                                                                                                                                                 |
+| `fixupCompileCommands(projectDir)`  | **Post-processes `compile_commands.json`** — see below                                                                                                                                                                                                                             |
+| `ensureClangdArgs(projectDir)`      | Writes `--compile-commands-dir` and `--query-driver` to `clangd.arguments` workspace setting                                                                                                                                                                                       |
+| `notifyRescanBackend()`             | Executes the active backend's rescan command (e.g., `clangd.restart`)                                                                                                                                                                                                              |
 | `warnIfBackendMissing()`            | Shows a missing-backend warning; if `cpptools` is selected but missing, VS Code prompts to install `ms-vscode.cpptools`, while non-VS Code hosts offer a guided clangd fallback (switch directly if installed, or search for clangd/Anysphere C++) plus an install-cpptools option |
 
 #### `fixupCompileCommands` — the key function
