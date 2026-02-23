@@ -11,6 +11,10 @@ import * as pioNodeHelpers from 'platformio-node-helpers';
 import * as piodebug from 'platformio-vscode-debug';
 import * as utils from './utils';
 
+import {
+  applyBackendConfigDefaults,
+  warnIfBackendMissing,
+} from './intellisense';
 import InstallationManager from './installer/manager';
 import PIOHome from './home';
 import PIOReleaseNotes from './release-notes';
@@ -100,6 +104,8 @@ class PlatformIOVSCodeExtension {
 
     misc.maybeRateExtension();
     misc.warnAboutConflictedExtensions();
+    applyBackendConfigDefaults();
+    warnIfBackendMissing();
     this.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor((editor) =>
         misc.warnAboutInoFile(editor),

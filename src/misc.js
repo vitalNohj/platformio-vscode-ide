@@ -6,7 +6,7 @@
  * the root directory of this source tree.
  */
 
-import { CONFLICTED_EXTENSION_IDS } from './constants';
+import { getActiveConflictedExtensionIds } from './intellisense';
 import { extension } from './main';
 import vscode from 'vscode';
 
@@ -55,8 +55,9 @@ export async function maybeRateExtension() {
 }
 
 export async function warnAboutConflictedExtensions() {
+  const conflictedIds = getActiveConflictedExtensionIds();
   const conflicted = vscode.extensions.all.filter(
-    (ext) => ext.isActive && CONFLICTED_EXTENSION_IDS.includes(ext.id),
+    (ext) => ext.isActive && conflictedIds.includes(ext.id),
   );
   if (conflicted.length === 0) {
     return;

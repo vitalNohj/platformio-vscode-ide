@@ -9,6 +9,11 @@
 import * as pioNodeHelpers from 'platformio-node-helpers';
 import * as projectHelpers from './helpers';
 
+import {
+  getActiveBackend,
+  notifyRescanBackend,
+  ensureClangdCompileCommandsDir,
+} from '../intellisense';
 import { disposeSubscriptions, notifyError } from '../utils';
 import { ProjectConfigLanguageProvider } from './config';
 import ProjectTaskManager from './tasks';
@@ -31,7 +36,8 @@ export default class ProjectManager {
     this._configChangedTimeout = undefined;
 
     this._pool = new pioNodeHelpers.project.ProjectPool({
-      ide: 'vscode',
+      ide: getActiveBackend().indexerIde,
+      intelliSenseBackend: getActiveBackend(),
       api: {
         logOutputChannel: this._logOutputChannel,
         createFileSystemWatcher: vscode.workspace.createFileSystemWatcher,
@@ -83,6 +89,10 @@ export default class ProjectManager {
           );
         },
         onDidNotifyError: notifyError.bind(this),
+        onDidRebuildIndex: (projectDir) => {
+          ensureClangdCompileCommandsDir(projectDir);
+          notifyRescanBackend();
+        },
       },
       settings: {
         autoPreloadEnvTasks: extension.getConfiguration('autoPreloadEnvTasks'),
@@ -227,6 +237,7 @@ export default class ProjectManager {
     ) {
       disposeSubscriptions(this.internalSubscriptions);
       await this._pool.switch(projectDir);
+      await ensureClangdCompileCommandsDir(projectDir);
       this._taskManager = new ProjectTaskManager(projectDir, observer);
       this.internalSubscriptions.push(
         this._taskManager,
