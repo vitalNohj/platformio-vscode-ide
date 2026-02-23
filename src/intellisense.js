@@ -309,6 +309,61 @@ export function warnIfBackendMissing() {
     return;
   }
   const backend = getActiveBackend();
+  const clangdInstalled = !!vscode.extensions.getExtension(
+    INTELLISENSE_BACKENDS.clangd.extensionId,
+  );
+
+  // Friendly fallback path: if cpptools is missing, help users switch to clangd.
+  if (backend.id === 'cpptools') {
+    const switchTitle = clangdInstalled
+      ? 'Switch to clangd'
+      : 'Find clangd / Anysphere C++';
+    vscode.window
+      .showWarningMessage(
+        'PlatformIO: cpptools is selected for IntelliSense, but it is not installed. ' +
+          'You can switch PlatformIO IntelliSense to clangd instead.',
+        { title: switchTitle, isCloseAffordance: false },
+        { title: 'Install cpptools', isCloseAffordance: false },
+        { title: 'Dismiss', isCloseAffordance: true },
+      )
+      .then(async (selected) => {
+        if (!selected) {
+          return;
+        }
+
+        if (selected.title === 'Install cpptools') {
+          vscode.commands.executeCommand(
+            'workbench.extensions.search',
+            backend.extensionId,
+          );
+          return;
+        }
+
+        if (selected.title === 'Switch to clangd') {
+          await vscode.workspace
+            .getConfiguration('platformio-ide')
+            .update('intelliSenseEngine', 'clangd', vscode.ConfigurationTarget.Global);
+          await applyBackendConfigDefaults();
+          const reload = await vscode.window.showInformationMessage(
+            'PlatformIO IntelliSense engine was switched to clangd. Reload window to apply fully.',
+            'Reload Window',
+          );
+          if (reload === 'Reload Window') {
+            vscode.commands.executeCommand('workbench.action.reloadWindow');
+          }
+          return;
+        }
+
+        if (selected.title === 'Find clangd / Anysphere C++') {
+          vscode.commands.executeCommand(
+            'workbench.extensions.search',
+            'clangd anysphere c++',
+          );
+        }
+      });
+    return;
+  }
+
   vscode.window
     .showWarningMessage(
       `PlatformIO: The selected IntelliSense engine "${backend.label}" ` +
