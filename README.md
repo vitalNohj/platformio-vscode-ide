@@ -1,4 +1,4 @@
-# Clangd IntelliSense Backend for PlatformIO VS Code IDE
+# Clangd IntelliSense Backend for PlatformIO on Cursor
 
 ## Overview
 
