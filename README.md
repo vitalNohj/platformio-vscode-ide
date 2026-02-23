@@ -5,6 +5,12 @@
 This fork adds **clangd** as an alternative IntelliSense backend alongside the existing Microsoft C/C++ (`cpptools`) engine. Users can switch between backends via a single setting. When clangd is selected, the extension automatically generates `compile_commands.json`, post-processes it for clangd compatibility, and configures the clangd language server with the correct arguments for cross-compilation toolchains.
 
 This is editor-agnostic across VS Code-compatible hosts (for example: VS Code, VSCodium, Cursor). This integration is half allowing clangd to happen and half helpers to make clangd work better...
+1. Stop blocking without ms.vscode-cpptools
+2. PIO commands can use clangd or cpptools based on setting
+3. Instead of writing c_pp file for intellisense, allow ability to write compile_commands.json instead
+4. Post process compile_commands.json to deal with platformio dependancy quirks/clangd folder structure
+5. Popup if you dont have cpptools or popup if you dont have vscode to download and switch to clangd.
+
 
 **Upstream:** [platformio/platformio-vscode-ide](https://github.com/platformio/platformio-vscode-ide) (tag `v3.3.4`)
 **Fork:** [vitalNohj/platformio-vscode-ide](https://github.com/vitalNohj/platformio-vscode-ide)
