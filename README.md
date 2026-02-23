@@ -231,7 +231,7 @@ PlatformIO's `pio run -t compiledb` produces a `compile_commands.json` that does
 
 2. **Relative include paths** — PIO writes `-I.pio/libdeps/...` instead of absolute paths. While clangd should resolve these against the `"directory"` field, in practice this is unreliable. The function converts all relative `-I` paths to absolute.
 
-3. **Missing header entries** — Clangd uses directory proximity to match header files to compilation database entries. If a header lives in a different directory tree than any `.cpp` file (e.g., `usermods/foo.h` included from `wled00/main.cpp`), clangd can't find matching flags and loses all IntelliSense for that header. The function walks the project directory, finds all `.h/.hpp/.c/.cpp/.cc/.cxx/.ino` files that aren't already in the database, and adds synthetic entries using the richest compile command as a template.
+3. **Missing header entries** — Clangd uses directory proximity to match header files to compilation database entries. If a header lives in a different directory tree than any `.cpp` file (e.g., `util/foo.h`), clangd can't find matching flags and loses all IntelliSense for that header. The function walks the project directory, finds all `.h/.hpp/.c/.cpp/.cc/.cxx/.ino` files that aren't already in the database, and adds synthetic entries using the richest compile command as a template.
 
 ---
 
