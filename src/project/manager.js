@@ -13,7 +13,7 @@ import {
   getActiveBackend,
   notifyRescanBackend,
   ensureClangdArgs,
-  ensureCompiledbIncludeToolchain,
+  fixupCompileCommands,
 } from '../intellisense';
 import { disposeSubscriptions, notifyError } from '../utils';
 import { ProjectConfigLanguageProvider } from './config';
@@ -90,10 +90,9 @@ export default class ProjectManager {
           );
         },
         onDidNotifyError: notifyError.bind(this),
-        onBeforeRebuildIndex: (projectDir) =>
-          ensureCompiledbIncludeToolchain(projectDir),
-        onDidRebuildIndex: (projectDir) => {
-          ensureClangdArgs(projectDir);
+        onDidRebuildIndex: async (projectDir) => {
+          await fixupCompileCommands(projectDir);
+          await ensureClangdArgs(projectDir);
           notifyRescanBackend();
         },
       },

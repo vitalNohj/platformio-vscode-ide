@@ -61,82 +61,105 @@ function collectOtherBackendValues(activeId) {
   return values;
 }
 
-const COMPILEDB_TOOLCHAIN_SCRIPT = 'platformio_compiledb_include_toolchain.py';
-const COMPILEDB_TOOLCHAIN_SCRIPT_CONTENT = [
-  '# Injected by PlatformIO IDE so compile_commands.json includes toolchain paths for clangd',
-  'Import("env")',
-  'env.Replace(COMPILATIONDB_INCLUDE_TOOLCHAIN=True)',
-].join('\n');
-
-export async function ensureCompiledbIncludeToolchain(projectDir) {
+/**
+ * Post-process compile_commands.json so clangd works correctly:
+ *  1. Resolve bare compiler names to absolute paths so --query-driver matches.
+ *  2. Convert relative -I include paths to absolute so clangd finds headers.
+ *  3. Convert relative "file" entries to absolute.
+ */
+export async function fixupCompileCommands(projectDir) {
   if (getActiveBackendId() !== 'clangd' || !projectDir) {
     return;
   }
-  const scriptDir = path.join(projectDir, '.vscode');
-  const scriptPath = path.join(scriptDir, COMPILEDB_TOOLCHAIN_SCRIPT);
-  const iniPath = path.join(projectDir, 'platformio.ini');
-
+  const ccPath = path.join(projectDir, 'compile_commands.json');
+  let raw;
   try {
-    await fs.mkdir(scriptDir, { recursive: true });
-    const existing = await fs.readFile(scriptPath, 'utf-8').catch(() => '');
-    if (existing.trim() !== COMPILEDB_TOOLCHAIN_SCRIPT_CONTENT.trim()) {
-      await fs.writeFile(scriptPath, COMPILEDB_TOOLCHAIN_SCRIPT_CONTENT + '\n', 'utf-8');
+    raw = await fs.readFile(ccPath, 'utf-8');
+  } catch {
+    return;
+  }
+
+  let entries;
+  try {
+    entries = JSON.parse(raw);
+  } catch {
+    return;
+  }
+
+  const resolveCache = new Map();
+  const homedir = process.env.HOME || process.env.USERPROFILE || '~';
+  const packagesDir = path.join(homedir, '.platformio', 'packages');
+
+  async function resolveCompiler(bare) {
+    if (resolveCache.has(bare)) {
+      return resolveCache.get(bare);
     }
-
-    let iniContent = await fs.readFile(iniPath, 'utf-8').catch(() => '');
-    if (iniContent.includes(COMPILEDB_TOOLCHAIN_SCRIPT)) {
-      return;
-    }
-
-    const scriptRef = `pre:.vscode/${COMPILEDB_TOOLCHAIN_SCRIPT}`;
-    const lines = iniContent.split(/\r?\n/);
-    const eol = iniContent.includes('\r\n') ? '\r\n' : '\n';
-
-    // Find the [env] base section (not [env:xxx]) -- all envs inherit from it
-    let envBaseIndex = -1;
-    let envBaseExtraScriptsIndex = -1;
-    let nextSectionAfterEnvBase = -1;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (/^\[env\]\s*$/.test(line)) {
-        envBaseIndex = i;
-        continue;
-      }
-      if (envBaseIndex >= 0 && nextSectionAfterEnvBase === -1) {
-        if (/^\[/.test(line)) {
-          nextSectionAfterEnvBase = i;
+    try {
+      const dirs = await fs.readdir(packagesDir);
+      for (const d of dirs) {
+        if (!d.startsWith('toolchain-') && !d.startsWith('tool-')) {
           continue;
         }
-        if (/^\s*extra_scripts\s*=/.test(line)) {
-          envBaseExtraScriptsIndex = i;
+        const candidate = path.join(packagesDir, d, 'bin', bare);
+        try {
+          await fs.access(candidate);
+          resolveCache.set(bare, candidate);
+          return candidate;
+        } catch {
+          // not here
         }
       }
+    } catch {
+      // packagesDir unreadable
+    }
+    resolveCache.set(bare, null);
+    return null;
+  }
+
+  let changed = false;
+  for (const entry of entries) {
+    const dir = entry.directory || projectDir;
+
+    // Absolute-ify the "file" field
+    if (entry.file && !path.isAbsolute(entry.file)) {
+      entry.file = path.join(dir, entry.file);
+      changed = true;
     }
 
-    if (envBaseIndex >= 0) {
-      if (envBaseExtraScriptsIndex >= 0) {
-        // Append to existing extra_scripts line in [env]
-        lines[envBaseExtraScriptsIndex] += `, ${scriptRef}`;
-      } else {
-        // Add extra_scripts right after [env] header
-        const insertAt = envBaseIndex + 1;
-        lines.splice(insertAt, 0, `extra_scripts = ${scriptRef}`);
-      }
-    } else {
-      // No [env] section exists -- add one before the first [env:xxx]
-      let firstEnvNamedIndex = lines.findIndex((l) => /^\[env:/.test(l));
-      if (firstEnvNamedIndex >= 0) {
-        lines.splice(firstEnvNamedIndex, 0, '[env]', `extra_scripts = ${scriptRef}`, '');
-      } else {
-        // No env sections at all -- append
-        lines.push('', '[env]', `extra_scripts = ${scriptRef}`);
+    if (!entry.command) {
+      continue;
+    }
+
+    const parts = entry.command.split(' ');
+    let entryChanged = false;
+
+    // 1. Resolve bare compiler name
+    const compiler = parts[0];
+    if (compiler && !compiler.includes('/') && !compiler.includes('\\')) {
+      const resolved = await resolveCompiler(compiler);
+      if (resolved) {
+        parts[0] = resolved;
+        entryChanged = true;
       }
     }
 
-    await fs.writeFile(iniPath, lines.join(eol), 'utf-8');
-  } catch (err) {
-    console.warn('PlatformIO IDE: could not ensure compiledb toolchain script:', err.message);
+    // 2. Convert relative -I paths to absolute
+    for (let i = 1; i < parts.length; i++) {
+      if (parts[i].startsWith('-I') && !parts[i].startsWith('-I/')) {
+        const rel = parts[i].slice(2);
+        parts[i] = `-I${path.join(dir, rel)}`;
+        entryChanged = true;
+      }
+    }
+
+    if (entryChanged) {
+      entry.command = parts.join(' ');
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    await fs.writeFile(ccPath, JSON.stringify(entries, null, 2) + '\n', 'utf-8');
   }
 }
 
