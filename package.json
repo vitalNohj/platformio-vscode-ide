@@ -897,7 +897,10 @@
     "build": "webpack --mode production",
     "lint": "eslint .eslintrc.js src",
     "format": "prettier --single-quote --print-width 88 --write \"src/**/*.js\"",
-    "vscode:package": "webpack --mode production && vsce package"
+    "vscode:package": "webpack --mode production && vsce package",
+    "prepare-helpers": "cd platformio-node-helpers/platformio-node-helpers && npm install && npm run build && cd ../.. && cp platformio-node-helpers/platformio-node-helpers/dist/index.js platformio-node-helpers/platformio-node-helpers/dist/index.js.map node_modules/platformio-node-helpers/dist/",
+    "create-helper-patch": "npm run prepare-helpers && npx patch-package platformio-node-helpers",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "fs-plus": "~3.1.1",
@@ -908,6 +911,7 @@
     "@types/node": "~14",
     "@types/vscode": "~1.65.0",
     "@vscode/vsce": "~3.2.1",
+    "patch-package": "^8.0.0",
     "eslint": "^8",
     "eslint-import-resolver-webpack": "~0.13.10",
     "eslint-plugin-import": "~2.31.0",

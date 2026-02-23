@@ -9,6 +9,8 @@
 import { INTELLISENSE_BACKENDS, getConflictedExtensionIds } from './constants';
 import { extension } from './main';
 import vscode from 'vscode';
+import { promises as fs } from 'fs';
+import path from 'path';
 
 export function getActiveBackendId() {
   return extension.getConfiguration('intelliSenseEngine') || 'cpptools';
@@ -59,32 +61,122 @@ function collectOtherBackendValues(activeId) {
   return values;
 }
 
-export async function ensureClangdCompileCommandsDir(projectDir) {
+const COMPILEDB_TOOLCHAIN_SCRIPT = 'platformio_compiledb_include_toolchain.py';
+const COMPILEDB_TOOLCHAIN_SCRIPT_CONTENT = [
+  '# Injected by PlatformIO IDE so compile_commands.json includes toolchain paths for clangd',
+  'Import("env")',
+  'env.Replace(COMPILATIONDB_INCLUDE_TOOLCHAIN=True)',
+].join('\n');
+
+export async function ensureCompiledbIncludeToolchain(projectDir) {
+  if (getActiveBackendId() !== 'clangd' || !projectDir) {
+    return;
+  }
+  const scriptDir = path.join(projectDir, '.vscode');
+  const scriptPath = path.join(scriptDir, COMPILEDB_TOOLCHAIN_SCRIPT);
+  const iniPath = path.join(projectDir, 'platformio.ini');
+
+  try {
+    await fs.mkdir(scriptDir, { recursive: true });
+    const existing = await fs.readFile(scriptPath, 'utf-8').catch(() => '');
+    if (existing.trim() !== COMPILEDB_TOOLCHAIN_SCRIPT_CONTENT.trim()) {
+      await fs.writeFile(scriptPath, COMPILEDB_TOOLCHAIN_SCRIPT_CONTENT + '\n', 'utf-8');
+    }
+
+    let iniContent = await fs.readFile(iniPath, 'utf-8').catch(() => '');
+    if (iniContent.includes(COMPILEDB_TOOLCHAIN_SCRIPT)) {
+      return;
+    }
+
+    const scriptRef = `pre:.vscode/${COMPILEDB_TOOLCHAIN_SCRIPT}`;
+    const lines = iniContent.split(/\r?\n/);
+    const eol = iniContent.includes('\r\n') ? '\r\n' : '\n';
+
+    // Find the [env] base section (not [env:xxx]) -- all envs inherit from it
+    let envBaseIndex = -1;
+    let envBaseExtraScriptsIndex = -1;
+    let nextSectionAfterEnvBase = -1;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\[env\]\s*$/.test(line)) {
+        envBaseIndex = i;
+        continue;
+      }
+      if (envBaseIndex >= 0 && nextSectionAfterEnvBase === -1) {
+        if (/^\[/.test(line)) {
+          nextSectionAfterEnvBase = i;
+          continue;
+        }
+        if (/^\s*extra_scripts\s*=/.test(line)) {
+          envBaseExtraScriptsIndex = i;
+        }
+      }
+    }
+
+    if (envBaseIndex >= 0) {
+      if (envBaseExtraScriptsIndex >= 0) {
+        // Append to existing extra_scripts line in [env]
+        lines[envBaseExtraScriptsIndex] += `, ${scriptRef}`;
+      } else {
+        // Add extra_scripts right after [env] header
+        const insertAt = envBaseIndex + 1;
+        lines.splice(insertAt, 0, `extra_scripts = ${scriptRef}`);
+      }
+    } else {
+      // No [env] section exists -- add one before the first [env:xxx]
+      let firstEnvNamedIndex = lines.findIndex((l) => /^\[env:/.test(l));
+      if (firstEnvNamedIndex >= 0) {
+        lines.splice(firstEnvNamedIndex, 0, '[env]', `extra_scripts = ${scriptRef}`, '');
+      } else {
+        // No env sections at all -- append
+        lines.push('', '[env]', `extra_scripts = ${scriptRef}`);
+      }
+    }
+
+    await fs.writeFile(iniPath, lines.join(eol), 'utf-8');
+  } catch (err) {
+    console.warn('PlatformIO IDE: could not ensure compiledb toolchain script:', err.message);
+  }
+}
+
+export async function ensureClangdArgs(projectDir) {
   if (getActiveBackendId() !== 'clangd' || !projectDir) {
     return;
   }
   const config = vscode.workspace.getConfiguration('clangd');
   const currentArgs = config.get('arguments') || [];
+  let newArgs = [...currentArgs];
+  let changed = false;
+
+  // --compile-commands-dir: tell clangd where compile_commands.json lives
   const compileCommandsFlag = `--compile-commands-dir=${projectDir}`;
+  changed = upsertArg(newArgs, '--compile-commands-dir=', compileCommandsFlag) || changed;
 
-  const existingIndex = currentArgs.findIndex((arg) =>
-    arg.startsWith('--compile-commands-dir='),
-  );
-  const newArgs = [...currentArgs];
-  if (existingIndex !== -1) {
-    if (newArgs[existingIndex] === compileCommandsFlag) {
-      return;
-    }
-    newArgs[existingIndex] = compileCommandsFlag;
-  } else {
-    newArgs.push(compileCommandsFlag);
+  // --query-driver: let clangd query PlatformIO cross-compilers for built-in
+  // include paths (C++ stdlib, GCC internals, sysroot). Without this, clangd
+  // can't resolve system headers for embedded targets like xtensa, arm, riscv.
+  const homedir = process.env.HOME || process.env.USERPROFILE || '~';
+  const queryDriverGlob = `${homedir}/.platformio/packages/toolchain-*/bin/*,${homedir}/.platformio/packages/tool-*/bin/*`;
+  const queryDriverFlag = `--query-driver=${queryDriverGlob}`;
+  changed = upsertArg(newArgs, '--query-driver=', queryDriverFlag) || changed;
+
+  if (changed) {
+    await config.update('arguments', newArgs, vscode.ConfigurationTarget.Workspace);
   }
+}
 
-  await config.update(
-    'arguments',
-    newArgs,
-    vscode.ConfigurationTarget.Workspace,
-  );
+function upsertArg(args, prefix, value) {
+  const idx = args.findIndex((a) => a.startsWith(prefix));
+  if (idx !== -1) {
+    if (args[idx] === value) {
+      return false;
+    }
+    args[idx] = value;
+    return true;
+  }
+  args.push(value);
+  return true;
 }
 
 export async function notifyRescanBackend() {

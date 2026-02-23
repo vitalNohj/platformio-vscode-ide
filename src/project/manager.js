@@ -12,7 +12,8 @@ import * as projectHelpers from './helpers';
 import {
   getActiveBackend,
   notifyRescanBackend,
-  ensureClangdCompileCommandsDir,
+  ensureClangdArgs,
+  ensureCompiledbIncludeToolchain,
 } from '../intellisense';
 import { disposeSubscriptions, notifyError } from '../utils';
 import { ProjectConfigLanguageProvider } from './config';
@@ -89,8 +90,10 @@ export default class ProjectManager {
           );
         },
         onDidNotifyError: notifyError.bind(this),
+        onBeforeRebuildIndex: (projectDir) =>
+          ensureCompiledbIncludeToolchain(projectDir),
         onDidRebuildIndex: (projectDir) => {
-          ensureClangdCompileCommandsDir(projectDir);
+          ensureClangdArgs(projectDir);
           notifyRescanBackend();
         },
       },
@@ -237,7 +240,7 @@ export default class ProjectManager {
     ) {
       disposeSubscriptions(this.internalSubscriptions);
       await this._pool.switch(projectDir);
-      await ensureClangdCompileCommandsDir(projectDir);
+      await ensureClangdArgs(projectDir);
       this._taskManager = new ProjectTaskManager(projectDir, observer);
       this.internalSubscriptions.push(
         this._taskManager,
