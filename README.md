@@ -7,6 +7,28 @@ This fork adds **clangd** as an alternative IntelliSense backend alongside the e
 **Upstream:** [platformio/platformio-vscode-ide](https://github.com/platformio/platformio-vscode-ide) (tag `v3.3.4`)
 **Fork:** [vitalNohj/platformio-vscode-ide](https://github.com/vitalNohj/platformio-vscode-ide)
 
+**Summary (vs upstream `v3.3.4`):**
+
+| Type         | Files                                                                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **New**      | `README.md`, `TESTING.md`, `patches/platformio-node-helpers+11.3.0.patch`, `platformio-node-helpers/` (vendored), `src/intellisense.js` |
+| **Modified** | `.gitignore`, `.vscodeignore`, `README.md`, `package.json`, `src/constants.js`, `src/main.js`, `src/misc.js`, `src/project/manager.js`  |
+
+> **Notes**
+>
+> - I make no **guarantees** that it will work for you — it can be finicky depending on the toolchain (e.g. xtensa).
+> - Tested only on **macOS**.
+> - Patch-package helpers are included if you use that workflow.
+>
+> **Build from source:** A pre-built VSIX is included. To build yourself:
+>
+> ```bash
+> npm install
+> npm run prepare-helpers
+> npm run create-helper-patch
+> npm run vscode:package
+> ```
+
 ---
 
 ## Why
@@ -46,6 +68,7 @@ Change this in **Settings > PlatformIO IDE > IntelliSense Engine**. Requires a w
 **Why:** The upstream treated `vscode-clangd` as always-conflicted. We need it to be a first-class backend. The registry stores each backend's metadata (extension ID, rescan command, config defaults, PIO CLI args) in one place so the rest of the code is data-driven.
 
 **Key details:**
+
 - `cpptools` backend sets `C_Cpp.intelliSenseEngine: "default"` and `C_Cpp.debugShortcut: false`
 - `clangd` backend sets `C_Cpp.intelliSenseEngine: "disabled"` and `clangd.detectExtensionConflicts: false`
 - `getConflictedExtensionIds()` dynamically marks all non-active backend extensions as conflicted
@@ -66,6 +89,7 @@ Change this in **Settings > PlatformIO IDE > IntelliSense Engine**. Requires a w
 ### `src/project/manager.js`
 
 **What changed:**
+
 - Passes `getActiveBackend()` as `intelliSenseBackend` to `ProjectPool`
 - Adds `onDidRebuildIndex` callback that runs `fixupCompileCommands()`, `ensureClangdArgs()`, and `notifyRescanBackend()` after every index rebuild
 - Calls `ensureClangdArgs()` on project switch
@@ -75,6 +99,7 @@ Change this in **Settings > PlatformIO IDE > IntelliSense Engine**. Requires a w
 ### `package.json`
 
 **What changed:**
+
 - Added `platformio-ide.intelliSenseEngine` setting with `cpptools`/`clangd` enum
 - Emptied `extensionDependencies` (was `["ms-vscode.cpptools"]`)
 - Emptied `configurationDefaults` (was `{ "C_Cpp.debugShortcut": false }` — now managed dynamically)
@@ -82,6 +107,7 @@ Change this in **Settings > PlatformIO IDE > IntelliSense Engine**. Requires a w
 - Added npm scripts: `prepare-helpers`, `create-helper-patch`, `postinstall`
 
 **Why:**
+
 - `extensionDependencies` forced cpptools installation — incompatible with clangd-only users
 - Config defaults are now applied at runtime based on the active backend
 - `patch-package` workflow applies `platformio-node-helpers` changes to `node_modules`
@@ -106,18 +132,18 @@ Change this in **Settings > PlatformIO IDE > IntelliSense Engine**. Requires a w
 
 The core of the clangd integration. Contains all backend-aware logic:
 
-| Function | Purpose |
-|---|---|
-| `getPlatformIOCoreDir()` | Resolves PlatformIO home dir via `PLATFORMIO_CORE_DIR` env var or `~/.platformio` |
-| `getActiveBackendId()` | Reads the `intelliSenseEngine` setting, defaults to `cpptools` |
-| `getActiveBackend()` | Returns the full backend descriptor from the registry |
-| `getActiveConflictedExtensionIds()` | Returns extension IDs that conflict with the active backend |
-| `isBackendExtensionInstalled()` | Checks if the active backend's VS Code extension is installed |
-| `applyBackendConfigDefaults()` | Applies config defaults for the active backend; intelligently undoes settings set by the previously-active backend |
-| `fixupCompileCommands(projectDir)` | **Post-processes `compile_commands.json`** — see below |
-| `ensureClangdArgs(projectDir)` | Writes `--compile-commands-dir` and `--query-driver` to `clangd.arguments` workspace setting |
-| `notifyRescanBackend()` | Executes the active backend's rescan command (e.g., `clangd.restart`) |
-| `warnIfBackendMissing()` | Shows a warning if the backend extension isn't installed, with an install button |
+| Function                            | Purpose                                                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `getPlatformIOCoreDir()`            | Resolves PlatformIO home dir via `PLATFORMIO_CORE_DIR` env var or `~/.platformio`                                  |
+| `getActiveBackendId()`              | Reads the `intelliSenseEngine` setting, defaults to `cpptools`                                                     |
+| `getActiveBackend()`                | Returns the full backend descriptor from the registry                                                              |
+| `getActiveConflictedExtensionIds()` | Returns extension IDs that conflict with the active backend                                                        |
+| `isBackendExtensionInstalled()`     | Checks if the active backend's VS Code extension is installed                                                      |
+| `applyBackendConfigDefaults()`      | Applies config defaults for the active backend; intelligently undoes settings set by the previously-active backend |
+| `fixupCompileCommands(projectDir)`  | **Post-processes `compile_commands.json`** — see below                                                             |
+| `ensureClangdArgs(projectDir)`      | Writes `--compile-commands-dir` and `--query-driver` to `clangd.arguments` workspace setting                       |
+| `notifyRescanBackend()`             | Executes the active backend's rescan command (e.g., `clangd.restart`)                                              |
+| `warnIfBackendMissing()`            | Shows a warning if the backend extension isn't installed, with an install button                                   |
 
 #### `fixupCompileCommands` — the key function
 
@@ -214,4 +240,6 @@ npm run build
 
 # Package VSIX
 npx vsce package --no-yarn
+or
+npm run vscode:package
 ```
