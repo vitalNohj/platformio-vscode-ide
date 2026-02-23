@@ -27,8 +27,6 @@ This is editor-agnostic across VS Code-compatible hosts (for example: VS Code, V
   - `src/misc.js`
   - `src/project/manager.js`
 
-_Excludes local/dev artifacts (for example `.cursor/**` plans and packaged `.vsix` outputs)._
-
 > **Notes**
 >
 > - I make no **guarantees** that it will work for you — it can be finicky depending on the toolchain (e.g. xtensa).
