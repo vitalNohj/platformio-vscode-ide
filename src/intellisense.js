@@ -66,6 +66,8 @@ function collectOtherBackendValues(activeId) {
  *  1. Resolve bare compiler names to absolute paths so --query-driver matches.
  *  2. Convert relative -I include paths to absolute so clangd finds headers.
  *  3. Convert relative "file" entries to absolute.
+ *  4. Add synthetic entries for header files included from other directories
+ *     so clangd can match them (it uses directory proximity heuristics).
  */
 export async function fixupCompileCommands(projectDir) {
   if (getActiveBackendId() !== 'clangd' || !projectDir) {
@@ -116,22 +118,20 @@ export async function fixupCompileCommands(projectDir) {
     return null;
   }
 
-  let changed = false;
+  const existingFiles = new Set();
   for (const entry of entries) {
     const dir = entry.directory || projectDir;
 
-    // Absolute-ify the "file" field
     if (entry.file && !path.isAbsolute(entry.file)) {
       entry.file = path.join(dir, entry.file);
-      changed = true;
     }
+    existingFiles.add(entry.file);
 
     if (!entry.command) {
       continue;
     }
 
     const parts = entry.command.split(' ');
-    let entryChanged = false;
 
     // 1. Resolve bare compiler name
     const compiler = parts[0];
@@ -139,28 +139,94 @@ export async function fixupCompileCommands(projectDir) {
       const resolved = await resolveCompiler(compiler);
       if (resolved) {
         parts[0] = resolved;
-        entryChanged = true;
       }
     }
 
     // 2. Convert relative -I paths to absolute
     for (let i = 1; i < parts.length; i++) {
       if (parts[i].startsWith('-I') && !parts[i].startsWith('-I/')) {
-        const rel = parts[i].slice(2);
-        parts[i] = `-I${path.join(dir, rel)}`;
-        entryChanged = true;
+        parts[i] = `-I${path.join(dir, parts[i].slice(2))}`;
       }
     }
 
-    if (entryChanged) {
-      entry.command = parts.join(' ');
-      changed = true;
+    entry.command = parts.join(' ');
+  }
+
+  // 3. Add synthetic entries for project header/source files that aren't in
+  //    the compilation database. clangd uses directory proximity to match
+  //    headers to compile commands; files in directories like usermods/ that
+  //    have no .cpp entry nearby get no flags and lose all IntelliSense.
+  //    We find a representative project entry and clone its flags for every
+  //    missing file.
+  const projectSrcEntries = entries.filter(
+    (e) =>
+      e.file &&
+      e.command &&
+      e.file.startsWith(projectDir) &&
+      !e.file.includes('/.pio/') &&
+      !e.file.includes('/.platformio/'),
+  );
+
+  // Pick the entry with the richest include set (most -I flags) as template
+  let templateEntry = projectSrcEntries[0];
+  let maxIncludes = 0;
+  for (const e of projectSrcEntries) {
+    const count = (e.command.match(/-I/g) || []).length;
+    if (count > maxIncludes) {
+      maxIncludes = count;
+      templateEntry = e;
     }
   }
 
-  if (changed) {
-    await fs.writeFile(ccPath, JSON.stringify(entries, null, 2) + '\n', 'utf-8');
+  if (templateEntry) {
+    const templateCmd = templateEntry.command.replace(/\s-o\s+\S+/, ' -o /dev/null');
+    const templateDir = templateEntry.directory;
+
+    async function walkDir(dir) {
+      const result = [];
+      let dirents;
+      try {
+        dirents = await fs.readdir(dir, { withFileTypes: true });
+      } catch {
+        return result;
+      }
+      for (const d of dirents) {
+        const full = path.join(dir, d.name);
+        if (d.isDirectory()) {
+          if (d.name.startsWith('.') || d.name === 'node_modules') {
+            continue;
+          }
+          result.push(...(await walkDir(full)));
+        } else if (/\.(h|hpp|c|cpp|cc|cxx|ino)$/i.test(d.name)) {
+          result.push(full);
+        }
+      }
+      return result;
+    }
+
+    const allProjectFiles = await walkDir(projectDir);
+    const syntheticEntries = [];
+
+    for (const file of allProjectFiles) {
+      if (file.includes('/.pio/') || file.includes('/node_modules/')) {
+        continue;
+      }
+      if (existingFiles.has(file)) {
+        continue;
+      }
+      syntheticEntries.push({
+        directory: templateDir,
+        command: templateCmd.replace(templateEntry.file, file),
+        file,
+      });
+    }
+
+    if (syntheticEntries.length > 0) {
+      entries.push(...syntheticEntries);
+    }
   }
+
+  await fs.writeFile(ccPath, JSON.stringify(entries, null, 2) + '\n', 'utf-8');
 }
 
 export async function ensureClangdArgs(projectDir) {
